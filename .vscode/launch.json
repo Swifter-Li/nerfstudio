@@ -56,7 +56,7 @@
           "--data",
           "${workspaceFolder}/data/gallery/ball",
           "--vis",
-          "tensorboard"
+          "wandb"
       ],
       "console": "integratedTerminal"
     },

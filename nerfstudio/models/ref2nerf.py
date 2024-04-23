@@ -140,7 +140,9 @@ class OffsetLoss(nn.Module):
     def forward(self, x):
         # Assume outputs is a dict containing "offset" which is a tensor of Δx values
         # Compute the loss as the square root of the sum of squares of the offsets
+
         offset_loss = torch.sqrt(torch.sum(x**2))
+        #offset_loss = torch.mean(x**2)
         return offset_loss
 
 
@@ -270,6 +272,7 @@ class Ref2NeRFModel(Model):
         param_groups = {}
         param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
         param_groups["fields"] = list(self.field.parameters())
+        
         #self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
 
@@ -389,23 +392,23 @@ class Ref2NeRFModel(Model):
         # L2 regularizaion
         #loss = torch.sqrt(torch.sum(outputs["offset"]**2))
         #loss_dict["offset_loss"] = self.offset_loss(outputs["offset"])
-        loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb) # + 5e-6*self.offset_loss(outputs["offset"])
-        if self.training:
-            loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
-                outputs["weights_list"], outputs["ray_samples_list"]
-            )
-            assert metrics_dict is not None and "distortion" in metrics_dict
-            loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            if self.config.predict_normals:
-                # orientation loss for computed normals
-                loss_dict["orientation_loss"] = self.config.orientation_loss_mult * torch.mean(
-                    outputs["rendered_orientation_loss"]
-                )
+        loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)  + 1e-5*self.offset_loss(outputs["offset"])
+        # if self.training:
+        #     loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
+        #         outputs["weights_list"], outputs["ray_samples_list"]
+        #     )
+        #     assert metrics_dict is not None and "distortion" in metrics_dict
+        #     loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
+        #     if self.config.predict_normals:
+        #         # orientation loss for computed normals
+        #         loss_dict["orientation_loss"] = self.config.orientation_loss_mult * torch.mean(
+        #             outputs["rendered_orientation_loss"]
+        #         )
 
-                # ground truth supervision for normals
-                loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
-                    outputs["rendered_pred_normal_loss"]
-                )
+        #         # ground truth supervision for normals
+        #         loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
+        #             outputs["rendered_pred_normal_loss"]
+        #         )
             # Add loss from camera optimizer
            # self.camera_optimizer.get_loss_dict(loss_dict)
         return loss_dict
@@ -429,11 +432,11 @@ class Ref2NeRFModel(Model):
 
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
-        lpips = self.lpips(gt_rgb, predicted_rgb)
+      #  lpips = self.lpips(gt_rgb, predicted_rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        metrics_dict["lpips"] = float(lpips)
+      #  metrics_dict["lpips"] = float(lpips)
 
         images_dict = {"img": combined_rgb, "vi_rgb": combined_vi_rgb, "vd_rgb": combined_vd_rgb}
 

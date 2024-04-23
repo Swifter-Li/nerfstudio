@@ -96,12 +96,12 @@ class Ref2NerfField(Field):
         use_average_appearance_embedding: bool = False,
         spatial_distortion: Optional[SpatialDistortion] = None,
         average_init_density: float = 1.0,
-        implementation: Literal["tcnn", "torch"] = "tcnn",
+        implementation: Literal["tcnn", "torch"] = "torch",
     ) -> None:
         super().__init__()
 
         self.register_buffer("aabb", aabb)
-        self.geo_feat_dim = geo_feat_dim
+        self.geo_feat_dim = 64
 
         self.register_buffer("max_res", torch.tensor(max_res))
         self.register_buffer("num_levels", torch.tensor(num_levels))
@@ -132,10 +132,13 @@ class Ref2NerfField(Field):
             in_dim=3, num_frequencies=10, min_freq_exp=0, max_freq_exp=9, 
             include_input=True, implementation=implementation)
 
+        self.num_layers = 4
+        self.hidden_dim = 128
+        self.num_layers_color = 2
         self.mlp_base = MLP(
             in_dim= self.position_encoding.get_out_dim(),
-            num_layers=num_layers,
-            layer_width=hidden_dim,
+            num_layers=self.num_layers,
+            layer_width=self.hidden_dim,
             out_dim=1 + self.geo_feat_dim,
             activation=nn.ReLU(),
             out_activation=None,
@@ -158,8 +161,8 @@ class Ref2NerfField(Field):
 
         self.mlp_base_independent = MLP(
             in_dim= self.position_encoding.get_out_dim(),
-            num_layers=num_layers,
-            layer_width=hidden_dim,
+            num_layers=self.num_layers + 2,
+            layer_width=self.hidden_dim,
             out_dim=1 + 3 + self.geo_feat_dim,
             activation=nn.ReLU(),
             out_activation=None,
@@ -181,29 +184,30 @@ class Ref2NerfField(Field):
         #     implementation=implementation,
         # )
 
+        self.feature_dim = 64
         self.mlp_head = MLP(
             in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
-            num_layers=num_layers_color,
-            layer_width=hidden_dim_color,
-            out_dim=1 + 32,
+            num_layers=self.num_layers_color,
+            layer_width=self.hidden_dim,
+            out_dim=1 + self.feature_dim,
             activation=nn.ReLU(),
             out_activation=None,
             implementation=implementation,
         )
         self.mlp_offset = MLP(
             in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
-            num_layers=num_layers_color,
-            layer_width=hidden_dim_color,
+            num_layers=self.num_layers_color,
+            layer_width=self.hidden_dim,
             out_dim=3,
             activation=nn.ReLU(),
-            out_activation=nn.Sigmoid(),
+            out_activation=None,
             implementation=implementation,
         )
 
         self.mlp_decoder = MLP(
-            in_dim = 32,
+            in_dim = self.feature_dim,
             num_layers=2,
-            layer_width=32,
+            layer_width=24,
             out_dim=3,
             activation=nn.ReLU(),
             out_activation=nn.Sigmoid(),
@@ -211,12 +215,12 @@ class Ref2NerfField(Field):
         )
 
         self.mlp_gate = MLP(
-            in_dim = 32,
+            in_dim = self.feature_dim,
             num_layers=2,
-            layer_width=32,
+            layer_width=24,
             out_dim=1,
             activation=nn.ReLU(),
-            out_activation=nn.Sigmoid(),
+            out_activation=None,
             implementation=implementation,
         )
 
@@ -232,8 +236,8 @@ class Ref2NerfField(Field):
         else:
             positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
         # Make sure the tcnn gets inputs between 0 and 1.
-        selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
-        positions = positions * selector[..., None]
+     #   selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
+     #   positions = positions * selector[..., None]
         self._sample_locations = positions
         if not self._sample_locations.requires_grad:
             self._sample_locations.requires_grad = True
@@ -249,7 +253,7 @@ class Ref2NerfField(Field):
         # softplus, because it enables high post-activation (float32) density outputs
         # from smaller internal (float16) parameters.
         density = self.average_init_density * trunc_exp(density_before_activation.to(positions))
-        density = density * selector[..., None]
+     #   density = density * selector[..., None]
         return density, base_mlp_out
 
     def get_outputs(
@@ -304,24 +308,21 @@ class Ref2NerfField(Field):
             dim=-1,
         )
 
-        offset = self.mlp_offset(h_offset).view(*outputs_shape, -1).to(directions)
+        offset = self.mlp_offset(h_offset).view(*outputs_shape, -1)
         delta_x = torch.cumsum(weight * offset, dim=-2)
 
-        #ray_samples.frustums.set_offsets(delta_x)
-
+        ray_samples.frustums.set_offsets(delta_x)
+        positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
+        directions = get_normalized_directions(ray_samples.frustums.directions)
+        directions_flat = directions.view(-1, 3)
+        d = self.direction_encoding(directions_flat)
        
         #Calculate the view-dependent and view-independent outputs
-        if self.spatial_distortion is not None:
-            positions = ray_samples.frustums.get_positions()
-            positions = self.spatial_distortion(positions)
-            positions = (positions + 2.0) / 4.0
-        else:
-            positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions() + delta_x, self.aabb)
         #Make sure the tcnn gets inputs between 0 and 1.
 
-        selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
-        positions = positions * selector[..., None]
-        self._sample_locations = positions
+       # selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
+       # positions = positions * selector[..., None]
+       # self._sample_locations = positions
         if not self._sample_locations.requires_grad:
             self._sample_locations.requires_grad = True
         encode_xyz = self.position_encoding(positions.view(-1, 3))
@@ -331,7 +332,7 @@ class Ref2NerfField(Field):
         #h = self.mlp_base_independent(positions_flat).view(*ray_samples.frustums.shape, -1)
         density_vi, color_vi, base_mlp_out = torch.split(h, [1, 3, self.geo_feat_dim], dim=-1)
         density_vi = self.average_init_density * trunc_exp(density_vi.to(positions))
-        density_vi = density_vi * selector[..., None]        
+       # density_vi = density_vi * selector[..., None]        
 
         h_vd = torch.cat(
             [
@@ -341,20 +342,21 @@ class Ref2NerfField(Field):
             dim=-1,
         )
 
-        density_vd, color_vd = torch.split(self.mlp_head(h_vd).view(*outputs_shape, -1).to(directions), [1, 32], dim=-1)
+        density_vd, color_vd = torch.split(self.mlp_head(h_vd).view(*outputs_shape, -1).to(directions), [1, self.feature_dim], dim=-1)
         density_vd = self.average_init_density * trunc_exp(density_vd.to(positions))
-        density_vd = density_vd * selector[..., None]
+    #    density_vd = density_vd * selector[..., None]
 
 
         # Render view-independent color
         weight_vi = ray_samples.get_weights(density_vi)
+        color_vi = torch.sigmoid(color_vi)
         rgb_vi = torch.sum(weight_vi*color_vi, dim=-2)
         #rgb_vi = self.renderer_offset(weight_vi, color_vi, ray_samples.frustums.directions)
 
         # Render view-dependent color
-        weight_vd = ray_samples.get_weights_and_transmittance(density, density_vd)
+        weight_vd = ray_samples.get_weights(density_vd)
+        #weight_vd = ray_samples.get_weights_and_transmittance(density, density_vd)
         feature_map = torch.sum(weight_vd*color_vd, dim=-2)
-        #rgb_vd = self.renderer_offset(weight_vd, color_vd, ray_samples.frustums.directions)
 
         rgb_vd = self.mlp_decoder(feature_map)
 
@@ -363,12 +365,12 @@ class Ref2NerfField(Field):
         alpha = self.mlp_gate(feature_map).view(-1, 1)
         rgb = alpha * rgb_vd + rgb_vi
         #rgb = torch.nan_to_num(rgb)
-        rgb = torch.clamp(rgb, 0.0, 1.0)
+        #rgb = torch.clamp(rgb, 0.0, 1.0)
 
         field_outputs = {}
        # field_outputs = self.get_outputs(ray_samples, density_embedding=density_embedding)
         field_outputs[FieldHeadNames.SH] = delta_x # type: ignore
-        field_outputs[FieldHeadNames.DENSITY] = density_vi + density_vd
+        field_outputs[FieldHeadNames.DENSITY] = density_vi
         field_outputs[FieldHeadNames.RGB] = rgb
         field_outputs[FieldHeadNames.VI_RGB] = rgb_vi
         field_outputs[FieldHeadNames.VD_RGB] = rgb_vd
