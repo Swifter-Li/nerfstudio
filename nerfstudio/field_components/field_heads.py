@@ -30,6 +30,10 @@ class FieldHeadNames(Enum):
 
     RGB = "rgb"
     SH = "sh"
+    VI_RGB = "vi_rgb"
+    VD_RGB = "vd_rgb"
+    VI_DENSITY = "vi_density"
+    VD_DENSITY = "vd_density"
     DENSITY = "density"
     NORMALS = "normals"
     PRED_NORMALS = "pred_normals"

@@ -148,6 +148,24 @@ class RaySamples(TensorDataclass):
         weights = torch.nan_to_num(weights)
 
         return weights
+    
+    def get_weights_and_transmittance(self, densities: Float[Tensor, "*batch num_samples 1"], sigma_vd: Float[Tensor, "*batch num_samples 1"]):
+        delta_density = self.deltas * densities
+        #alphas = 1 - torch.exp(-delta_density)
+
+        transmittance = torch.cumsum(delta_density[..., :-1, :], dim=-2)
+        transmittance = torch.cat(
+            [torch.zeros((*transmittance.shape[:1], 1, 1), device=densities.device), transmittance], dim=-2
+        )
+        transmittance = torch.exp(-transmittance)  # [..., "num_samples"]
+
+
+        delta_sigma_vd = self.deltas * sigma_vd
+        sigma_vd_alphas = 1 - torch.exp(-delta_sigma_vd)
+        weights = sigma_vd_alphas * transmittance  # [..., "num_samples"]
+        weights = torch.nan_to_num(weights)
+
+        return weights
 
     @overload
     @staticmethod

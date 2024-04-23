@@ -47,6 +47,20 @@
       "args": ["instant_ngp"]
     },
     {
+      "name": "Train Ref2NeRF",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/train.py",
+      "args": [
+          "ref2nerf",
+          "--data",
+          "${workspaceFolder}/data/gallery/ball",
+          "--vis",
+          "tensorboard"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Python: train ngp nerfstudio",
       "type": "python",
       "request": "launch",
